@@ -1,12 +1,14 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const multer = require('multer');
+const path = require('path');
+const {DBHOST, DBPORT, DBNAME} = require('./config/config.js');
+const Bookmark = require('./models/BookmarkModel.js');
 const app = express();
 const port = 3000;
 
-
-
 // 连接到 MongoDB
-mongoose.connect(`mongodb://jiyiy.com:27017/bookmark`, {
+mongoose.connect(`mongodb://${DBHOST}:${DBPORT}/${DBNAME}`, {
     useNewUrlParser: true,  // 使用新的 URL 解析器，不建议使用旧的
     useUnifiedTopology: true,  // 使用新的服务器发现和监视引擎
     user: 'bookmark',
@@ -15,26 +17,29 @@ mongoose.connect(`mongodb://jiyiy.com:27017/bookmark`, {
 
 const db = mongoose.connection;
 
-// 定义数据模型
-const bookmarkSchema = new mongoose.Schema({
-  name: String,
-  url: String,
-  icon: String
-});
-
-const Bookmark = mongoose.model('Bookmark', bookmarkSchema);
-
 app.use(express.json());
 
 // 创建书签
 app.post('/api/bookmarks', async (req, res) => {
+  const Bookmarks = req.body;
   const { name, url, icon } = req.body;
   const newBookmark = new Bookmark({ name, url, icon });
-  try {
-    await newBookmark.save();
-    res.status(201).json({ message: '书签已创建', bookmark: newBookmark });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  const isNameDuplicate = await Bookmark.findOne({ name });
+  const isUrlDuplicate = await Bookmark.findOne({ url });
+  if (!Bookmarks || !Bookmarks.name || !Bookmarks.url || !Bookmarks.icon) {
+    res.status(400).json({ success: false, message: '无效或缺少参数' });
+    return;
+  }
+  // 存入数据库前检查名称和URL是否重复
+  if (isNameDuplicate || isUrlDuplicate) {
+      res.status(409).json({ success: false, message: '具有相同名称或URL地址的书签已存在' });
+  } else {
+    try {
+      await newBookmark.save();
+      res.status(201).json({ message: '书签已创建', bookmark: newBookmark });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 
@@ -46,7 +51,7 @@ app.get('/api/bookmarks', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-  console.log('接收的请求体',req.body);
+  // console.log('接收的请求体',req.body);
 });
 
 // 获取单个书签
@@ -68,6 +73,11 @@ app.get('/api/bookmarks/:id', async (req, res) => {
 app.put('/api/bookmarks/:id', async (req, res) => {
   const { id } = req.params;
   const { name, url, icon } = req.body;
+  const Bookmarks = req.body;
+  if (!Bookmarks || !Bookmarks.name || !Bookmarks.url || !Bookmarks.icon) {
+    res.status(400).json({ success: false, message: '无效或缺少参数' });
+    return;
+  }
   try {
     const updatedBookmark = await Bookmark.findByIdAndUpdate(id, { name, url, icon }, { new: true });
     if (updatedBookmark) {
@@ -92,6 +102,49 @@ app.delete('/api/bookmarks/:id', async (req, res) => {
     }
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 配置 multer 中间件来处理文件上传
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+      cb(null, 'public/img'); // 选择图标存储的目录
+  },
+  filename: (req, file, cb) => {
+      const extname = path.extname(file.originalname);
+      cb(null, 'icon-' + Date.now() + extname); // 生成唯一文件名
+  }
+});
+
+// 添加文件过滤器
+const fileFilter = (req, file, cb) => {
+  // 检查文件类型是否为图片
+  const allowedMimes = ['image/jpeg', 'image/png', 'image/gif'];
+  if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+  } else {
+      cb(new Error('错误:无效的文件类型。只允许使用JPEG、PNG和GIF图像'), false);
+  }
+};
+
+const upload = multer({
+  storage,
+  limits: {
+      fileSize: 1 * 1024 * 1024, // 限制文件大小为1MB
+  },
+  fileFilter,
+});
+
+// 添加上传图标的路由
+app.post('/api/upload-icon', upload.single('icon'), (req, res) => {
+  if (req.file) {
+      // 获取图标文件的路径
+      const iconPath = path.join('public', 'img', path.basename(req.file.path)).replace(/\\/g, '/');
+      // 返回上传成功信息
+      res.status(201).json({ success: true, message: '图标上传成功', iconPath });
+  } else {
+      // 返回上传失败信息
+      res.status(400).json({ success: false, message: '图标上传失败' });
   }
 });
 
