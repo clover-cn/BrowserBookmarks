@@ -2,8 +2,17 @@ const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
-const {DBHOST, DBPORT, DBNAME} = require('./config/config.js');
+const session = require('express-session');
+const bodyParser = require('body-parser');
+const {DBHOST, DBPORT, DBNAME,Username,Password} = require('./config/config.js');
 const Bookmark = require('./models/BookmarkModel.js');
+const User = require('./models/UserModel.js');
+//导入检测登录的中间件
+const requireLogin = require('./middlewares/checkLoginMiddleware.js');
+// 创建一个黑名单列表，用于存储已注销的JWT令牌
+// const tokenBlacklist = [];
+global.tokenBlacklist = [];
+const jwt = require('jsonwebtoken');
 const app = express();
 const port = 3000;
 
@@ -11,13 +20,91 @@ const port = 3000;
 mongoose.connect(`mongodb://${DBHOST}:${DBPORT}/${DBNAME}`, {
     useNewUrlParser: true,  // 使用新的 URL 解析器，不建议使用旧的
     useUnifiedTopology: true,  // 使用新的服务器发现和监视引擎
-    user: 'bookmark',
-    pass: 'Aa1217412411',
+    user: Username,
+    pass: Password,
 });
 
 const db = mongoose.connection;
 
 app.use(express.json());
+app.use(bodyParser.json());
+
+// 配置会话中间件 这里不再使用session而是使用 JWT令牌
+// app.use(session({
+//   secret: 'your_secret_key', // 用于签名会话ID的密钥
+//   resave: false,
+//   saveUninitialized: true,
+// }));
+
+// 注册用户
+app.post('/api/register', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = new User({ username, password });
+    await user.save();
+    // req.session.user = user; // 存储用户信息在会话中 这里不再使用session而是使用 JWT令牌
+    res.status(201).json({ message: '用户注册成功' });
+  } catch (error) {
+    res.status(500).json({ message: '用户注册失败' });
+  }
+});
+
+// 用户登录
+// app.post('/api/login', async (req, res) => {
+//   const { username, password } = req.body;
+//   try {
+//     const user = await User.findOne({ username, password });
+//     if (user) {
+//       req.session.user = user; // 存储用户信息在会话中
+//       res.status(200).json({ message: '登录成功' });
+//       console.log(req.session.user);
+//     } else {
+//       res.status(401).json({ message: '登录失败' });
+//     }
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).json({ message: '登录失败' });
+//   }
+// });
+// 在登录成功后生成JWT令牌
+app.post('/api/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await User.findOne({ username, password });
+    if (user) {
+      // 使用JWT令牌
+      const token = jwt.sign({ userId: user._id }, 'browser-bookmarks_secret_key', { expiresIn: '1h' });
+      res.status(200).json({ message: '登录成功', token });
+    } else {
+      res.status(401).json({ message: '登录失败' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: '登录失败' });
+  }
+});
+
+// 用户退出登录
+// app.get('/api/logout', (req, res) => {
+//   req.session.destroy((err) => {
+//     if (err) {
+//       res.status(500).json({ message: '退出登录失败' });
+//     } else {
+//       res.status(200).json({ message: '成功退出登录' });
+//     }
+//   });
+// });
+// 用户退出登录
+app.post('/api/logout', (req, res) => {
+  const token = req.headers.authorization && req.headers.authorization.split(' ')[1];
+  if (token) {
+    // 将JWT令牌添加到黑名单
+    global.tokenBlacklist.push(token);
+    res.status(200).json({ message: '成功退出登录' });
+  } else {
+    res.status(401).json({ message: '未提供令牌' });
+  }
+});
 
 // 创建书签
 app.post('/api/bookmarks', async (req, res) => {
@@ -44,7 +131,7 @@ app.post('/api/bookmarks', async (req, res) => {
 });
 
 // 获取所有书签
-app.get('/api/bookmarks', async (req, res) => {
+app.get('/api/bookmarks',requireLogin, async (req, res) => {
   try {
     const bookmarks = await Bookmark.find();
     res.json(bookmarks);
@@ -148,11 +235,31 @@ app.post('/api/upload-icon', upload.single('icon'), (req, res) => {
   }
 });
 
+// 受保护的路由，检查JWT令牌是否在黑名单中
+app.get('/api/protected-route', (req, res) => {
+  const token = req.headers.authorization && req.headers.authorization.split(' ')[1];
+  if (token) {
+    // 检查JWT令牌是否在黑名单中
+    if (tokenBlacklist.includes(token)) {
+      res.status(401).json({ message: '令牌无效' });
+    } else {
+      // 令牌有效，继续请求
+      res.status(200).json({ message: '身份验证成功' });
+    }
+  } else {
+    res.status(401).json({ message: '未提供令牌' });
+  }
+});
+
 // 404
 app.get('*', (req, res) => {
     res.status(404).send(`
     <h1>404</h1>
     <h3>
+    用户注册: 发送 POST 请求到 /api/register<br/>
+    用户登录: 发送 POST 请求到 /api/register<br/>
+    后续请求头添加:Authorization: Bearer <token><br/>
+    用户退出登录: 发送 GET 请求到 /api/logout<br/>
     获取所有书签：发送 GET 请求到 /api/bookmarks。<br/>
     获取特定书签：发送 GET 请求到 /api/bookmarks/:id，其中 :id 是书签的索引。<br/>
     添加新书签：发送 POST 请求到 /api/bookmarks，并在请求体中包含新书签的数据。<br/>

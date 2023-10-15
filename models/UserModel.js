@@ -1,11 +1,11 @@
 const mongoose = require('mongoose');
 // 定义文档的结构
 let UserSchema = new mongoose.Schema({
-  phone: {
+  username: {
     type: String,
     required: true,
   },
-  pass: {
+  password: {
     type: String,
     required: true
   },

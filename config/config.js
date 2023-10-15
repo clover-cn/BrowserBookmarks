@@ -3,6 +3,7 @@ module.exports = {
   DBHOST: 'jiyiy.com',
   DBPORT: 27017,
   DBNAME: 'bookmark',
-  secret: 'aa',
+  Username: 'bookmark',
+  Password: 'Aa1217412411',
   session_max_age: 7 * 24 * 60 * 60 * 1000
 }
